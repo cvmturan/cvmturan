@@ -1,6 +1,6 @@
 {
   "name": "tshow-desktop",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "description": "TShow desktop app with private, device-local playback",
   "main": "main.js",
@@ -23,7 +23,13 @@
       "security.js",
       "player.js",
       "package.json",
-      "embedded-player.js"
+      "embedded-player.js",
+      "playback-view.js",
+      "player-preload.js",
+      "player.html",
+      "player.css",
+      "player-ui.js",
+      "native-video.js"
     ],
     "extraResources": [
       {
@@ -54,5 +60,8 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true
     }
+  },
+  "dependencies": {
+    "koffi": "2.14.1"
   }
 }

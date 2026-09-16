@@ -106,7 +106,7 @@
 
     async function browserJSON(value, signal) {
         const url = publicAddonURL(value);
-        const response = await nativeFetch(url.href, { credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store', signal: signal || AbortSignal.timeout(10000) });
+        const response = await nativeFetch(url.href, { credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(8000)]) : AbortSignal.timeout(8000) });
         if (!response.ok) throw new Error('Provider declined browser access.');
         publicAddonURL(response.url);
         const reader = response.body.getReader();
@@ -132,13 +132,42 @@
         return response.json();
     }
 
+    async function availableManifests(signal) {
+        const account = window.TShowAccount?.user?.id || '';
+        const urls = storedAddonURLs();
+        const cached = new Map(storedManifests().map(m => [m.manifestURL, m]));
+        await Promise.all(urls.filter(url => !cached.has(url)).map(async manifestURL => {
+            try {
+                const manifest = { ...await browserJSON(manifestURL, signal), manifestURL };
+                const normalized = (await normalizeBrowserResult(manifest, 'manifest', null, signal)).manifest;
+                if (normalized && account === (window.TShowAccount?.user?.id || '')) { rememberManifest(normalized); cached.set(manifestURL, normalized); }
+            } catch { /* The response below retains an explicit unavailable-provider status. */ }
+        }));
+        return urls.map(url => cached.get(url)).filter(Boolean);
+    }
+
     async function recoverBrowserSources(url, response, init) {
-        if (!response.ok || !/^\/api\/streams\/(movie|series|tv)\/[^/]+$/.test(url.pathname)) return response;
-        const body = await response.clone().json();
-        const failed = (body.sources || []).filter(source => source.error);
-        if (!failed.length) return response;
-        const manifests = storedManifests().filter(m => storedAddonURLs().includes(m.manifestURL));
+        if (!/^\/api\/streams\/(movie|series|tv)\/[^/]+$/.test(url.pathname)) return response;
+        const body = response.ok ? await response.clone().json() : { streams: [], sources: [] };
+        body.streams ||= []; body.sources ||= [];
         const [, , , type, encodedId] = url.pathname.split('/');
+        const mediaType = type === 'tv' ? 'series' : type;
+        const id = decodeURIComponent(encodedId);
+        const manifests = await availableManifests(init.signal);
+        const selected = (url.searchParams.get('addonIds') || '').split(',').filter(Boolean);
+        const eligible = manifests.filter(m => (m.resources || []).some(r => (typeof r === 'string' ? r : r.name) === 'stream') &&
+            (!selected.length || selected.includes(m.id)) && (!m.types?.length || m.types.includes(mediaType)) &&
+            (!m.idPrefixes?.length || m.idPrefixes.some(prefix => id.startsWith(prefix))));
+        const failed = eligible.filter(m => {
+            const source = body.sources.find(source => source.addonId === m.id);
+            return !source || source.error || source.actionable === 0;
+        }).map(m => ({ addonId: m.id, addonName: m.name }));
+        const missing = storedAddonURLs().filter(url => !manifests.some(m => m.manifestURL === url));
+        missing.forEach((manifestURL,index) => {
+            let name = 'Installed add-on';try { name = new URL(manifestURL).hostname; } catch {}
+            body.sources.push({addonId:'unavailable-'+index,addonName:name,returned:0,actionable:0,error:'This installed add-on could not load its manifest. Reload Add-ons to retry; its settings are still saved.'});
+        });
+        if (!failed.length) return missing.length ? Response.json(body,{headers:{'Cache-Control':'no-store'}}) : response;
         const results = await Promise.all(failed.map(async source => {
             const manifest = manifests.find(m => m.id === source.addonId);
             if (!manifest) return null;
@@ -153,7 +182,10 @@
         }));
         for (const result of results.filter(Boolean)) {
             body.streams = body.streams.filter(s => s.sourceAddon !== result.source.addonId).concat(result.streams);
-            body.sources = body.sources.map(s => s.addonId === result.source.addonId ? result.source : s);
+            body.sources = body.sources.filter(s => s.addonId !== result.source.addonId).concat(result.source);
+        }
+        for (const source of failed) if (!body.sources.some(s => s.addonId === source.addonId)) {
+            body.sources.push({ ...source, returned: 0, actionable: 0, error: 'Provider could not be reached from the server or this device. Your add-on is still installed.' });
         }
         body.count = body.streams.length;
         return Response.json(body, { headers: { 'Cache-Control': 'no-store' } });
@@ -185,11 +217,13 @@
             return nativeFetch(input, init);
         }
         if (url.origin === window.location.origin && (url.pathname.startsWith('/api/addons') || url.pathname.startsWith('/api/streams'))) {
+            const account = window.TShowAccount?.user?.id || '';
             const headers = new Headers(input instanceof Request ? input.headers : undefined);
             new Headers(init.headers || {}).forEach((value, key) => headers.set(key, value));
             const encoded = encodedAddonURLs();
             if (encoded) headers.set('X-TShow-Addon-Urls', encoded);
             let response = await nativeFetch(input, { ...init, headers });
+            if (account !== (window.TShowAccount?.user?.id || '')) throw new DOMException('Account changed', 'AbortError');
             if (!response.ok && url.pathname === '/api/addons/install' && typeof init.body === 'string') {
                 try {
                     const { manifestURL } = JSON.parse(init.body);
@@ -200,6 +234,7 @@
             }
             response = await recoverBrowserSources(url, response, init);
             response = await recoverBrowserManifests(url, response, init);
+            if (account !== (window.TShowAccount?.user?.id || '')) throw new DOMException('Account changed', 'AbortError');
             await rememberResponseManifests(url, response);
             return response;
         }

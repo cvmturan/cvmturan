@@ -2,7 +2,7 @@
 
 TShow Desktop keeps add-ons and playback on the viewer's computer. It loads the public TShow interface and plays selected direct HTTPS media inside the app using the bundled mpv engine. The Windows installer includes its playback engine, so users do not need to install VLC separately. Render never receives, proxies, caches, or transcodes the video.
 
-Press Esc or choose **Back to sources** to return from playback. The Playback menu contains pause, subtitle, audio, seek and speed controls. Playback position is saved through the same account storage as browser playback. Unavailable or blocked provider links can still fail; a failed source returns to the source picker.
+Press Esc or choose **Back to sources** to return from playback. The bottom control bar contains a seek timeline, pause, subtitle, audio, volume and speed controls. A visible loading screen and retry message remain available even when a source fails. Windows uses an app-owned native surface, positioned between the header and controls, to prevent Chromium from covering the video. Playback position is saved through the same account storage as browser playback. Unavailable or blocked provider links can still fail; a failed source returns to the source picker.
 
 ## Requirements
 

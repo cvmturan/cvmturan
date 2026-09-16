@@ -1,7 +1,7 @@
 (() => {
     'use strict';
     const names = { watchlist: 'streamflix:watchlist:v1', continueWatching: 'streamflix:continue:v1', recentlyViewed: 'tshow:recent:v1', addonURLs: 'streamflix:addons:v1', region: 'tshow:region:v1', playerPreferences: 'tshow:player:v1' };
-    let user = null, config = {}, versions = {}, pending = new Map(), saving = false, flushPromise = null, timer, blocked = false, lastRefresh = 0;
+    let user = null, config = {}, versions = {}, pending = new Map(), saving = false, flushPromise = null, timer, blocked = false, lastRefresh = 0, localRevision = 0;
     const status = text => {
         for (const id of ['account-sync-status', 'settings-save-state']) {
             const el = document.getElementById(id);
@@ -25,6 +25,7 @@
         return data;
     }
     function save(storageKey, value) {
+        localRevision++;
         try { value === null ? localStorage.removeItem(storageKey) : localStorage.setItem(storageKey, value); }
         catch { status('Browser storage is full or unavailable.'); }
         const key = Object.keys(names).find(k => keyFor(k) === storageKey);
@@ -76,7 +77,11 @@
     async function refresh() {
         if (!user || saving || pending.size || Date.now() - lastRefresh < 5000) return [];
         lastRefresh = Date.now();
-        const cloud = await request('/api/account/data');
+        const accountId = user.id, revision = localRevision;
+        let cloud;
+        try { cloud = await request('/api/account/data'); }
+        catch { return []; } // Keep the device copy usable during background network failures.
+        if (user?.id !== accountId || revision !== localRevision || saving || pending.size) return [];
         const changed = [];
         for (const key of Object.keys(names)) {
             const entry = cloud.data[key];
@@ -106,6 +111,8 @@
         localStorage.removeItem(`tshow:pending:${user.id}`);
         localStorage.removeItem(`tshow:user:${user.id}:addon-client`);
         localStorage.removeItem(`tshow:user:${user.id}:manifest-cache`);
+        localStorage.removeItem(keyFor('manifest-cache'));
+        localStorage.removeItem(keyFor('addon-client'));
     }
     function setupUI() {
         const dialog = document.getElementById('account-dialog');

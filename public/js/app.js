@@ -1619,7 +1619,8 @@
     function streamCompatibilityGroup(stream) {
         if (stream.isDemo) return 'demo';
         if (browserAttemptURL(stream)) return 'playable';
-        if (stream.externalUrl || stream.externalPlayerUrl || stream.externalAppUrl) return 'external';
+        if (isSafeExternalAppURL(stream.externalAppUrl)) return 'app-only';
+        if (stream.externalUrl || stream.externalPlayerUrl) return 'external';
         return 'app-only';
     }
 
@@ -1892,7 +1893,7 @@
                 : canOpenPlayer
                     ? 'This user-added source goes directly from its provider to your device. TShow does not proxy or transcode the video.'
                     : canOpenApp
-                        ? 'Your device will hand this source to a compatible app. TShow does not download or operate the source.'
+                        ? stream.unsupportedReason || 'This source needs a compatible source app; it is not a direct video URL for Outplayer or VLC.'
                         : canTryDirect
                             ? 'This HTTPS link has no declared format. TShow can try it directly without proxying; it may still fail if it is a webpage or the provider blocks browsers.'
                             : stream.unsupportedReason ||
@@ -2046,10 +2047,23 @@
     function openActiveStreamInOutplayer() {
         const url = activeExternalPlayerURL();
         if (!url) return showToast('This source has no direct external-player link.', 'warning');
+        // Stop browser audio before handing the selected source to another app.
+        elements.videoPlayer.pause();
+        const requestKey = state.playerRequestKey;
+        const streamIndex = state.activeStreamIndex;
+        let leftPage = false;
+        const onVisibility = () => { if (document.hidden) leftPage = true; };
+        const onPageHide = () => { leftPage = true; };
+        document.addEventListener('visibilitychange', onVisibility);
+        window.addEventListener('pagehide', onPageHide, { once: true });
         window.location.href = `outplayer://x-callback-url/play?url=${encodeURIComponent(url)}`;
         setTimeout(() => {
-            showToast('If Outplayer did not open, install Outplayer from the App Store.', 'info');
-        }, 800);
+            document.removeEventListener('visibilitychange', onVisibility);
+            window.removeEventListener('pagehide', onPageHide);
+            if (!leftPage && !document.hidden && requestKey === state.playerRequestKey && streamIndex === state.activeStreamIndex) {
+                showToast('Outplayer requires an Apple device with Outplayer installed. If it did not open, use Copy link in Outplayer’s Open URL option.', 'info');
+            }
+        }, 1800);
     }
 
     function openActiveStreamInSourceApp() {
@@ -3048,6 +3062,13 @@
         const panel = document.querySelector(`[data-view-panel="${view}"]`);
         if (!panel) return;
 
+        if (state.titlePageActive) {
+            state.titlePageActive = false;
+            state.detailsRequest = (state.detailsRequest || 0) + 1;
+            elements.titleDetailView.hidden = true;
+            document.title = 'TShow · Movies, series and trailers';
+        }
+
         document.querySelectorAll('[data-view-panel]').forEach((candidate) => {
             candidate.hidden = candidate !== panel;
         });
@@ -3065,7 +3086,7 @@
         if (view === 'calendar') renderCalendar();
         if (view === 'history') renderHistory();
         if (view === 'settings') elements.regionSelect.value = state.region;
-        window.scrollTo({ top: 0, behavior: 'smooth' });
+        window.scrollTo({ top: 0, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
     }
 
     function updateIndexingForView(view) {
